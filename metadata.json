@@ -1,0 +1,8 @@
+{
+  "name": "YouTube AI Transcript Hub",
+  "description": "유튜브 동영상 자막을 AI로 자동/수동 분석하고 대화할 수 있는 지능형 영문/국문 자막 분석 및 저장 워크스테이션",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
