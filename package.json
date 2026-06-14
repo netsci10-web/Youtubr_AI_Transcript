@@ -1,5 +1,6 @@
 {
   "name": "react-example",
+  "homepage": "https://netsci10.github.io/Youtubr_AI_Transcript",
   "private": true,
   "version": "0.0.0",
   "type": "module",
