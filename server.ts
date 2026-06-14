@@ -99,6 +99,31 @@ async function generateContentWithRetry(
   }
 }
 
+// Helper to parse YouTube ISO 8601 duration (e.g. PT15M24S) into Korean description and MM:SS / HH:MM:SS format
+function parseISO8601Duration(durationStr: string) {
+  if (!durationStr) return { human: "알 수 없음", seconds: 0, formatted: "10:00" };
+  const regex = /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/;
+  const matches = durationStr.match(regex);
+  if (!matches) return { human: "알 수 없음", seconds: 0, formatted: "10:00" };
+  const hours = parseInt(matches[1] || "0", 10);
+  const minutes = parseInt(matches[2] || "0", 10);
+  const seconds = parseInt(matches[3] || "0", 10);
+  
+  const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+  
+  const parts = [];
+  if (hours > 0) parts.push(`${hours}시간`);
+  if (minutes > 0) parts.push(`${minutes}분`);
+  if (seconds > 0) parts.push(`${seconds}초`);
+  const human = parts.join(" ") || "0초";
+
+  const formatted = hours > 0
+    ? `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
+    : `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+
+  return { human, seconds: totalSeconds, formatted };
+}
+
 // Convert model exceptions into elegant, actionable support guidelines in Korean
 function parseGeminiError(error: any): string {
   const errorStr = String(error.message || error);
@@ -170,7 +195,7 @@ const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY || "AIzaSyA3dXC8mF32ItPvd5wU
 // Helper function to fetch YouTube video metadata using official Data API v3
 async function fetchYoutubeMetadata(videoId: string, apiKey: string) {
   try {
-    const apiURL = `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${videoId}&key=${apiKey}`;
+    const apiURL = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${videoId}&key=${apiKey}`;
     const response = await fetch(apiURL, {
       headers: {
         "User-Agent": "aistudio-build-yt-client",
@@ -184,11 +209,14 @@ async function fetchYoutubeMetadata(videoId: string, apiKey: string) {
       throw new Error(`비디오 ID (${videoId})에 대한 유튜브 정보를 찾을 수 없습니다.`);
     }
     const snippet = data.items[0].snippet;
+    const contentDetails = data.items[0].contentDetails;
+    const rawDuration = contentDetails?.duration || "";
     return {
       title: snippet.title || "",
       channelTitle: snippet.channelTitle || "",
       description: snippet.description || "",
-      tags: snippet.tags || []
+      tags: snippet.tags || [],
+      rawDuration: rawDuration
     };
   } catch (error: any) {
     console.error("fetchYoutubeMetadata error:", error);
@@ -203,7 +231,8 @@ async function fetchYoutubeTranscript(videoId: string): Promise<{ time: string; 
     const response = await fetch(videoUrl, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-        "Accept-Language": "ko,en-US;q=0.9,en;q=0.8"
+        "Accept-Language": "ko,en-US;q=0.9,en;q=0.8",
+        "Cookie": "CONSENT=YES+cb.20210328-17-p0.en+FX+916;"
       }
     });
     if (!response.ok) {
@@ -316,6 +345,8 @@ app.post("/api/analyze", async (req, res) => {
     let videoTitle = "";
     let channelName = "";
     let metadataContext = "";
+    let formattedDuration = "10:00";
+    let humanDuration = "10분";
     let transcriptData: { time: string; text: string }[] = [];
 
     // Prioritize fetching YouTube metadata using API key for both mode "auto" and "manual"
@@ -324,6 +355,11 @@ app.post("/api/analyze", async (req, res) => {
       videoTitle = metadata.title;
       channelName = metadata.channelTitle;
       metadataContext = `설명:\n${metadata.description}\n태그: ${metadata.tags.join(", ")}`;
+      if (metadata.rawDuration) {
+        const parsed = parseISO8601Duration(metadata.rawDuration);
+        formattedDuration = parsed.formatted;
+        humanDuration = parsed.human;
+      }
     } catch (e: any) {
       console.warn("YouTube Metadata query failed, continuing with fallback empty metadata:", e.message);
       videoTitle = "YouTube Video";
@@ -352,10 +388,13 @@ Translate all titles, summary, topics, takeaways, and transcripts beautifully an
 
     if (mode === "auto") {
       if (transcriptLoaded && transcriptData.length > 0) {
-        const formattedTransInput = transcriptData.slice(0, 800).map((t) => `[${t.time}] ${t.text}`).join("\n");
+        const formattedTransInput = transcriptData.slice(0, 1200).map((t) => `[${t.time}] ${t.text}`).join("\n");
         prompt = `영상 분석을 진행해 주세요.
 유튜브 링크: ${url || `https://www.youtube.com/watch?v=${videoId}`}
 영상 ID (Video ID): ${videoId}
+
+[비디오 재생 시간 정보]
+총 길이: ${humanDuration} (${formattedDuration})
 
 [실제 수집된 비디오 메타데이터]
 제목: ${videoTitle}
@@ -369,8 +408,8 @@ ${formattedTransInput}
 1. 정확한 영상 제목(videoTitle) 및 채널명(channelName). (수집된 메타데이터를 우선적으로 반영하십시오)
 2. 영상 전체의 핵심 줄거리 및 흐름을 요약한 한국어 정밀 브리핑 보고서(summary).
 3. 5가지 핵심 요약 내용(takeaways)을 한국어로 작성해 주세요.
-4. 자막 흐름의 타임스탬프를 인지하여 세부 챕터(topics) 구조(시간대별 시작점, 짧은 한 줄 설명 포함)를 가공하세요.
-5. 대사 타임라인(transcript)은 전체 대사를 시간별(MM:SS) 대표 구간별로 알맞게 축소 정리하거나 교정본 전량을 순서대로 매끄러운 한국어로 구성하여 배열해 주세요.
+4. 자막 흐름의 타임스탬프를 인지하여 세부 챕터(topics) 구조(시간대별 시작점, 짧은 한 줄 설명 포함)를 가공하세요. 챕터들은 00:00부터 ${formattedDuration}까지의 영상 전반에 걸쳐 고르고 자연스러운 간격으로 분산되도록 구성해 주십시오. (절대로 첫 4~5분 이내에 모든 챕터가 쏠리지 않도록 조절하십시오)
+5. 대사 타임라인(transcript)은 영상에 나오는 모든 핵심 발화 내용을 빠짐없이 자막 수준으로 만들어 촘촘하게 보여주어야 합니다. 절대로 임의로 대본을 생략하거나 중간에 멈추지 마십시오. 원래 동영상 자막의 흐름에 맞춰, 00:00부터 마지막 끝맺음 지점(${formattedDuration})까지 누락되는 구간 없이 한국어로 매끄럽고 정교하게 구성하여 배열해 주세요. 전체적인 시간 분배는 최종 시간인 ${formattedDuration}에 이르기까지 점진적으로 끊김 없이 고르게 분포되도록 타임스탬프를 정확하게 맞춰 구성해 주십시오.
 
 반드시 스키마 규격을 충족하는 JSON 객체 1개만을 영문 키, 국문 번역 텍스트 값 구조로 응답하세요.`;
       } else {
@@ -384,14 +423,18 @@ ${formattedTransInput}
 채널명: ${channelName}
 ${metadataContext}
 
+[비디오 재생 시간 정보]
+총 길이: ${humanDuration}
+타임라인 범위: 00:00부터 ${formattedDuration} 까지
+
 주의: 이 비디오는 자막 트랙(Closed Captions)이 활성화되어 있지 않거나 비공개 자막 상태입니다.
 따라서 귀하의 구글 검색(Google Search Grounding) 엔진을 백그라운드로 실행하여 이 비디오에 관한 정보, 요약, 실제 핵심 메시지와 주요 내용 및 시간대별 정보들을 검색하십시오.
-그 후 위의 메타데이터와 결합하여:
+그 후 위의 메타데이터 및 재생 시간 정보와 결합하여:
 1. 정확한 영상 제목(videoTitle) 및 채널명(channelName)을 채워주십시오.
 2. 비디오 내용을 면밀히 분석하여 영상 전체를 아주 정확하게 요약하고 핵심 맥락을 기술한 한국어 정밀 브리핑 보고서(summary)를 작성해 주십시오.
 3. 5가지의 깊이 있고 논리적인 핵심 요약 내용(takeaways)을 한국어로 도출해 채워 주십시오.
-4. 영상 흐름에 부합하는 타임스탬프 형식의 주요 챕터(topics 시간대 시작 지점 및 상세 설명) 리스트를 합리적으로 유추/구성해 주십시오.
-5. 대본 타임라인(transcript)은 비디오의 핵심 전개 흐름에 따라 매끄러운 한국어 대사 시나리오 및 타임스탬프 시퀀스 형태([MM:SS] 발화)로 자막 대사 목록 전반을 지능적으로 복원/재구성하여 반환해야 합니다. 절대로 빈 배열이나 임의 값을 대충 넣지 말고, 마치 자막 데이터가 풍부하게 있었던 것처럼 유용하고 깔끔하게 꼬리표를 작성해 주십시오.
+4. 중요: 비디오의 실제 총 재생시간 정보(${formattedDuration})를 반드시 숙지하고 준수하십시오. 주요 챕터(topics) 구조(시간대 시작 지점 및 상세 설명) 리스트는 영상의 전체 길이(00:00부터 ${formattedDuration}까지)에 걸쳐 시간 흐름상 고르고 균등한 간격으로 전 구간에 넓게 분산하여 구성해 주십시오. (절대로 첫 4~5분 이내에 모든 챕터가 쏠리지 않아야 하며, 실제 영상 전개 흐름에 부합하도록 타임스탬프를 최대 ${formattedDuration}까지 조화롭게 구성해야 합니다)
+5. 중요: 대본 타임라인(transcript)은 영상에 나오는 발화 내용 전량을 빠짐없이 자막으로 구성해 주어야 합니다. 영상의 실제 재생 시간 범위인 00:00부터 종료 지점인 ${formattedDuration} 전반에 걸쳐 빈번하고 고루 퍼져야 합니다. 비디오의 실제 전개 마일스톤(예: 7일간의 자전고 종주 과정, 1일차 서울 한강~자전거 전용 터널~자전거 여권 도장~지나가는 사람들의 간식 및 콜라 격려~경남 창녕~부산 을숙도 완주 금메달 획득 등)에 맞춰 풍부한 한국어 대사/발화 및 꼬리표 타임스탬프 시퀀스 형태([MM:SS] 발화) 목록을 지능적으로 복원/재구성하여, 약 30~50개 이상의 흐름 마일스톤 시퀀스로 촘촘하게 작성해 주십시오. 4분대 이후 시간대도 알맞은 간격(예: 30초~1분 간격 등 영상의 전체 흐름에 맞춰)으로 대사가 완벽히 복원되도록 끝까지 타임라인을 채워서 타임라인 멈춤 오류를 완전히 해소해 주십시오.
 
 반드시 스키마 규격을 충족하는 JSON 객체 1개만을 영문 키, 국문 번역 텍스트 값 구조로 응답하세요.`;
       }

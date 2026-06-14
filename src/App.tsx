@@ -560,10 +560,10 @@ export default function App() {
         </section>
 
         {/* Outer Grid Workspace Block */}
-        <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        <section className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
           
           {/* LEFT COLUMN: Media Companion Player + Meta Information + Client Chatbot */}
-          <div className="col-span-12 lg:col-span-5 space-y-6">
+          <div className="col-span-12 md:col-span-5 space-y-6">
             
             {/* Companion Player Glassbox */}
             <div className="bg-slate-950/50 border border-white/10 rounded-2xl overflow-hidden shadow-2xl">
@@ -752,7 +752,7 @@ export default function App() {
           </div>
 
           {/* RIGHT COLUMN: Tab-Based Workstation Workspace Panel */}
-          <div className="col-span-12 lg:col-span-7 space-y-6">
+          <div className="col-span-12 md:col-span-7 space-y-6">
             
             {/* Workspace Glassmorphism Panel Container */}
             <div className="bg-slate-900/40 border border-white/10 rounded-2xl overflow-hidden shadow-2xl flex flex-col min-h-[600px] relative">
