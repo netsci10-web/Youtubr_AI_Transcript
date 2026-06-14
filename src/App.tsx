@@ -96,6 +96,7 @@ export default function App() {
 
   // Ref scroll to bottom for chatbot log
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   // Auto Scroll Chat
   useEffect(() => {
@@ -212,10 +213,19 @@ export default function App() {
       });
 
       clearTimeout(timeoutId);
-
+      
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(errorText || "API 응답 오류 발생");
+        let errorMsg = "API 응답 오류 발생";
+        try {
+          const parsed = JSON.parse(errorText);
+          if (parsed && parsed.error) {
+            errorMsg = parsed.error;
+          }
+        } catch (e) {
+          errorMsg = errorText || errorMsg;
+        }
+        throw new Error(errorMsg);
       }
 
       const resData = await response.json();
@@ -258,7 +268,33 @@ export default function App() {
   const handleSeekVideo = (timeStr: string) => {
     const totalSeconds = parseTimeToSeconds(timeStr);
     setPlayerStart(totalSeconds);
-    showToast(`비디오 재생 지점을 ${timeStr} (${totalSeconds}초) 위치로 동기화합니다.`, "info");
+
+    if (iframeRef.current && iframeRef.current.contentWindow) {
+      try {
+        // Send seekTo command to YouTube Player API
+        iframeRef.current.contentWindow.postMessage(
+          JSON.stringify({
+            event: "command",
+            func: "seekTo",
+            args: [totalSeconds, true]
+          }),
+          "*"
+        );
+        // Send playVideo command to start playing automatically
+        iframeRef.current.contentWindow.postMessage(
+          JSON.stringify({
+            event: "command",
+            func: "playVideo",
+            args: []
+          }),
+          "*"
+        );
+      } catch (err) {
+        console.warn("YouTube player postMessage failed:", err);
+      }
+    }
+
+    showToast(`비디오 재생 지점을 ${timeStr} (${totalSeconds}초) 위치로 동기화하고 즉시 재생합니다.`, "info");
   };
 
   // Chat Submission Agent Action
@@ -310,7 +346,15 @@ export default function App() {
       });
 
       if (!response.ok) {
-        throw new Error("채팅 커뮤니케이션 도중 통신 오류가 발생했습니다.");
+        const errorText = await response.text();
+        let errorMsg = "채팅 커뮤니케이션 도중 통신 오류가 발생했습니다.";
+        try {
+          const parsed = JSON.parse(errorText);
+          if (parsed && parsed.error) {
+            errorMsg = parsed.error;
+          }
+        } catch (e) {}
+        throw new Error(errorMsg);
       }
 
       const resData = await response.json();
@@ -584,7 +628,8 @@ export default function App() {
               <div className="relative aspect-video bg-black group border-b border-white/5">
                 {videoId ? (
                   <iframe
-                    key={`${videoId}-${playerStart}`}
+                    ref={iframeRef}
+                    key={videoId}
                     id="youtube-player"
                     src={`https://www.youtube.com/embed/${videoId}?autoplay=1&start=${playerStart}&enablejsapi=1`}
                     title="YouTube video player"
